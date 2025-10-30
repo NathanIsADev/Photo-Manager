@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Photo Manager (PWA + Camera)</title>
+<link rel="icon" href="data:;base64,iVBORw0KGgo=" />
+<style>
+  :root{--accent:#1473e6;--gap:10px;--pad:12px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial}
+  html,body{height:100%}
+  body{margin:0;background:#f4f6f8;color:#111;display:flex;flex-direction:column}
+  header{background:#fff;padding:10px;border-bottom:1px solid #e6e9ee;position:sticky;top:0;z-index:20}
+  .container{max-width:980px;margin:0 auto;padding:8px}
+  h1{margin:0 0 8px 0;font-size:20px}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input[type=text],select{padding:10px;border-radius:8px;border:1px solid #d6d9de;min-width:120px;flex:1}
+  button{background:var(--accent);color:#fff;border:none;padding:10px 12px;border-radius:8px;cursor:pointer}
+  button.ghost{background:#6c6c6c}
+  .upload-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .upload-row input[type=file]{flex:1}
+  main{flex:1;overflow:auto}
+  .list{margin:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+  .card{background:#fff;padding:8px;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);display:flex;flex-direction:column;gap:8px}
+  .thumb{width:100%;height:120px;object-fit:cover;border-radius:8px;background:#eee}
+  .meta{font-size:12px;color:#666}
+  .title{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bottom-actions{display:none;position:fixed;left:10px;right:10px;bottom:10px;gap:8px;z-index:30}
+  .bottom-actions button{flex:1}
+  @media(max-width:700px){.controls{flex-direction:column}.upload-row{flex-direction:column}.bottom-actions{display:flex}.container{padding-bottom:100px}}
+  /* modal */
+  .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:50}
+  .panel{background:#fff;width:95%;max-width:840px;border-radius:10px;padding:12px;max-height:92vh;overflow:auto}
+  .panel img{max-width:100%;border-radius:8px}
+  label{font-weight:600;font-size:13px;display:block;margin-top:8px}
+  textarea{width:100%;min-height:90px;padding:8px;border-radius:8px;border:1px solid #d6d9de;resize:vertical}
+  .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .small{font-size:12px;color:#666}
+  /* camera modal */
+  .camera-view{display:flex;flex-direction:column;gap:8px;align-items:center}
+  video{width:100%;max-width:720px;border-radius:8px;background:#000}
+  .camera-controls{display:flex;gap:8px;margin-top:8px}
+  .camera-controls button{flex:1}
+  .capture-preview{max-width:100%;border-radius:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Photo Manager</h1>
+    <div class="controls">
+      <input id="search" type="text" placeholder="Search title or notes..." aria-label="Search" />
+      <select id="sort" aria-label="Sort">
+        <option value="recent">Most recent</option>
+        <option value="alpha">Alphabetical (A→Z)</option>
+      </select>
+      <button id="uploadBtn">Upload</button>
+      <button id="cameraBtn">Camera</button>
+      <button id="exportBtn" title="Export all data">Export</button>
+      <button id="importBtn" title="Import exported file">Import</button>
+    </div>
+    <form id="uploadForm" class="upload-row" style="display:none">
+      <input id="fileInput" type="file" accept="image/*" capture="environment" aria-label="Choose photo" />
+      <input id="titleInput" type="text" placeholder="Title (optional)" aria-label="Title" />
+      <button id="saveUpload" type="button">Save</button>
+    </form>
+    <div class="small">Tip: install to home screen to use offline (PWA). Important actions are kept accessible on small screens.</div>
+  </div>
+</header>
+<main>
+  <div class="container">
+    <div id="list" class="list" aria-live="polite"></div>
+  </div>
+</main>
+<div class="bottom-actions" id="bottomActions" aria-hidden="false">
+  <button id="refreshBtn" class="ghost">Refresh</button>
+  <button id="quickUpload">Quick Upload</button>
+</div>
+
+<!-- modal for detail -->
+<div id="modal" class="modal" style="display:none">
+  <div class="panel" role="dialog" aria-modal="true">
+    <a id="closeModal" href="#" style="float:right">Close</a>
+    <h2 id="modalTitle">Photo</h2>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<!-- camera modal -->
+<div id="cameraModal" class="modal" style="display:none">
+  <div class="panel" role="dialog" aria-modal="true">
+    <a id="closeCamera" href="#" style="float:right">Close</a>
+    <h2>Camera</h2>
+    <div class="camera-view">
+      <video id="video" autoplay playsinline></video>
+      <div class="camera-controls">
+        <button id="switchCamera" class="ghost">Switch</button>
+        <button id="capture" style="background:#27ae60">Capture</button>
+      </div>
+      <div id="cameraHint" class="small">Allow camera permission. Use "Switch" to toggle front/back if supported.</div>
+      <!-- capture preview area appears after taking a shot -->
+      <div id="capturePreviewArea" style="display:none; width:100%;">
+        <img id="capturePreview" class="capture-preview" src="" alt="Preview" />
+        <label for="captureTitle">Title</label>
+        <input id="captureTitle" type="text" placeholder="Title (optional)" />
+        <label for="captureNotes">Notes</label>
+        <textarea id="captureNotes" placeholder="Notes (optional)"></textarea>
+        <div class="row">
+          <button id="saveCapture">Save</button>
+          <button id="retake" class="ghost">Retake</button>
+          <button id="cancelCapture" style="background:#c0392b">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== IndexedDB helpers =====
+const DB_NAME = 'photo_manager_db_v2';
+const STORE = 'photos';
+async function openDB(){
+  return new Promise((res, rej)=>{
+    const r = indexedDB.open(DB_NAME, 2);
+    r.onupgradeneeded = e => { const db = e.target.result; if(!db.objectStoreNames.contains(STORE)){ const os = db.createObjectStore(STORE,{keyPath:'id'}); os.createIndex('created_at','created_at',{unique:false}); os.createIndex('title','title',{unique:false}); } };
+    r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error);
+  });
+}
+async function dbAdd(item){ const db=await openDB(); return new Promise((res,rej)=>{ try{ const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).put(item); tx.oncomplete=()=>res(true); tx.onerror=()=>rej(tx.error);}catch(e){rej(e)} }); }
+async function dbGetAll(){ const db=await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readonly'); const req=tx.objectStore(STORE).getAll(); req.onsuccess=()=>res(req.result||[]); req.onerror=()=>rej(req.error); }); }
+async function dbGet(id){ const db=await openDB(); return new Promise((res,rej)=>{ const r=db.transaction(STORE,'readonly').objectStore(STORE).get(id); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function dbDelete(id){ const db=await openDB(); return new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).delete(id); tx.oncomplete=()=>res(true); tx.onerror=()=>rej(tx.error); }); }
+
+// ===== UI elements =====
+const listEl=document.getElementById('list'); const searchEl=document.getElementById('search'); const sortEl=document.getElementById('sort'); const uploadBtn=document.getElementById('uploadBtn'); const uploadForm=document.getElementById('uploadForm'); const fileInput=document.getElementById('fileInput'); const titleInput=document.getElementById('titleInput'); const saveUpload=document.getElementById('saveUpload'); const modal=document.getElementById('modal'); const modalBody=document.getElementById('modalBody'); const modalTitle=document.getElementById('modalTitle'); const closeModal=document.getElementById('closeModal'); const bottomActions=document.getElementById('bottomActions'); const refreshBtn=document.getElementById('refreshBtn'); const exportBtn=document.getElementById('exportBtn'); const importBtn=document.getElementById('importBtn'); const quickUpload=document.getElementById('quickUpload');
+// camera
+const cameraBtn=document.getElementById('cameraBtn'); const cameraModal=document.getElementById('cameraModal'); const closeCamera=document.getElementById('closeCamera'); const video=document.getElementById('video'); const captureBtn=document.getElementById('capture'); const switchCameraBtn=document.getElementById('switchCamera'); const capturePreviewArea=document.getElementById('capturePreviewArea'); const capturePreview=document.getElementById('capturePreview'); const captureTitle=document.getElementById('captureTitle'); const captureNotes=document.getElementById('captureNotes'); const saveCapture=document.getElementById('saveCapture'); const retake=document.getElementById('retake'); const cancelCapture=document.getElementById('cancelCapture');
+let currentStream=null; let useFacingMode='environment';
+
+// ===== Utility helpers =====
+function formatReadable(iso){ try{ const dt=new Date(iso); return dt.toLocaleString(undefined,{month:'short',day:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){return iso||'';} }
+function escapeHtml(s){ return (s||'').toString().replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// create main + thumb blobs
+function imageFileToBlobs(file,maxMain=1600,maxThumb=400){ return new Promise((res,rej)=>{ const img=new Image(); const url=URL.createObjectURL(file); img.onload=()=>{ const w=img.width, h=img.height; let scale=Math.min(1, maxMain/Math.max(w,h)); const mw=Math.round(w*scale), mh=Math.round(h*scale); const mc=document.createElement('canvas'); mc.width=mw; mc.height=mh; mc.getContext('2d').drawImage(img,0,0,mw,mh); let tscale=Math.min(1, maxThumb/Math.max(w,h)); const tw=Math.round(w*tscale), th=Math.round(h*tscale); const tc=document.createElement('canvas'); tc.width=tw; tc.height=th; tc.getContext('2d').drawImage(img,0,0,tw,th); mc.toBlob(mb=>{ tc.toBlob(tb=>{ URL.revokeObjectURL(url); res({main:mb,thumb:tb}); },'image/jpeg',0.8); },'image/jpeg',0.9); }; img.onerror=e=>{ URL.revokeObjectURL(url); rej(e); }; img.src=url; }); }
+async function addPhotoFromFile(file,title){ try{ const blobs=await imageFileToBlobs(file,1600,400); const id=crypto.randomUUID(); const entry={id,filename:id+'.jpg',title:title||file.name,notes:'',created_at:new Date().toISOString(),blob:blobs.main,thumb:blobs.thumb}; await dbAdd(entry); return true;}catch(err){ if(err && err.name==='QuotaExceededError'){ alert('Storage full: try a smaller image or remove some photos.'); }else{ console.error(err); alert('Could not add photo: '+(err.message||err)); } return false; } }
+
+// ===== Render list (thumbnails) =====
+let urlCache=new Map(); async function renderList(){ const q=(searchEl.value||'').trim().toLowerCase(); const sort=sortEl.value; let items=await dbGetAll(); if(sort==='alpha') items.sort((a,b)=>(a.title||'').toLowerCase().localeCompare((b.title||'').toLowerCase())); else items.sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||'')); if(q) items=items.filter(it=>((it.title||'')+' '+(it.notes||'')).toLowerCase().includes(q)); listEl.innerHTML=''; if(!items.length){ listEl.innerHTML='<div style="grid-column:1/-1;padding:12px;background:#fff;border-radius:8px;text-align:center">No photos</div>'; return; } for(const item of items){ const card=document.createElement('div'); card.className='card'; card.setAttribute('data-id',item.id); let thumbUrl=urlCache.get(item.id); if(!thumbUrl){ thumbUrl=URL.createObjectURL(item.thumb); urlCache.set(item.id,thumbUrl); } card.innerHTML=`<img class="thumb" loading="lazy" src="${thumbUrl}" alt="${escapeHtml(item.title||'')}"><div class="title">${escapeHtml(item.title||'(no title)')}</div><div class="meta">${formatReadable(item.created_at)}</div>`; listEl.appendChild(card); } }
+
+// open detail
+async function openDetail(id){ const item=await dbGet(id); if(!item) return; modalTitle.textContent=item.title||'(no title)'; modalBody.innerHTML=''; const imgUrl=URL.createObjectURL(item.blob); const img=document.createElement('img'); img.src=imgUrl; img.alt=item.title||''; modalBody.appendChild(img); const titleLabel=document.createElement('label'); titleLabel.textContent='Title'; const titleInp=document.createElement('input'); titleInp.type='text'; titleInp.value=item.title||''; const notesLabel=document.createElement('label'); notesLabel.textContent='Notes'; const notes=document.createElement('textarea'); notes.value=item.notes||''; modalBody.appendChild(titleLabel); modalBody.appendChild(titleInp); modalBody.appendChild(notesLabel); modalBody.appendChild(notes); const row=document.createElement('div'); row.className='row'; const saveBtn=document.createElement('button'); saveBtn.textContent='Save'; const replaceBtn=document.createElement('button'); replaceBtn.textContent='Replace Image'; replaceBtn.style.background='#6c6c6c'; const delBtn=document.createElement('button'); delBtn.textContent='Delete'; delBtn.style.background='#c0392b'; row.appendChild(saveBtn); row.appendChild(replaceBtn); row.appendChild(delBtn); modalBody.appendChild(row); modal.style.display='flex'; saveBtn.onclick=async ()=>{ item.title=titleInp.value.trim(); item.notes=notes.value.trim(); await dbAdd(item); modal.style.display='none'; renderList(); }; replaceBtn.onclick=()=>{ const fi=document.createElement('input'); fi.type='file'; fi.accept='image/*'; fi.capture='environment'; fi.onchange=async ()=>{ if(!fi.files[0]) return; const blobs=await imageFileToBlobs(fi.files[0],1600,400); item.blob=blobs.main; item.thumb=blobs.thumb; await dbAdd(item); modal.style.display='none'; renderList(); }; fi.click(); }; delBtn.onclick=async ()=>{ if(!confirm('Delete this photo?')) return; await dbDelete(item.id); modal.style.display='none'; const u=urlCache.get(item.id); if(u){ URL.revokeObjectURL(u); urlCache.delete(item.id); } renderList(); }; }
+
+// ===== Export / Import =====
+async function exportAll(){ const items=await dbGetAll(); const out=[]; for(const it of items){ const dataUrl=await blobToDataURL(it.blob); const thumbUrl=await blobToDataURL(it.thumb); out.push({id:it.id,title:it.title,notes:it.notes,created_at:it.created_at,blob:dataUrl,thumb:thumbUrl}); } const payload=JSON.stringify({exported_at:new Date().toISOString(),items:out}); const blob=new Blob([payload],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='photo_manager_export.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+function blobToDataURL(blob){ return new Promise((res)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(blob); }); }
+async function importFile(file){ try{ const text=await file.text(); const parsed=JSON.parse(text); if(!parsed.items) throw new Error('Invalid file'); for(const it of parsed.items){ const main=dataURLtoBlob(it.blob); const thumb=dataURLtoBlob(it.thumb); const entry={id:it.id||crypto.randomUUID(),title:it.title||'',notes:it.notes||'',created_at:it.created_at||new Date().toISOString(),blob:main,thumb:thumb}; await dbAdd(entry); } alert('Import complete'); renderList(); }catch(e){ alert('Import failed: '+e.message); } }
+function dataURLtoBlob(dataURL){ const parts=dataURL.split(','); const m=parts[0].match(/:(.*?);/); const mime=m?m[1]:'image/jpeg'; const bstr=atob(parts[1]); let n=bstr.length; const u8=new Uint8Array(n); while(n--) u8[n]=bstr.charCodeAt(n); return new Blob([u8],{type:mime}); }
+
+// ===== camera helper functions =====
+async function startCamera(){ stopCamera(); try{ const constraints={ video: { facingMode: { exact: useFacingMode } } }; let stream; try{ stream = await navigator.mediaDevices.getUserMedia(constraints); } catch(e){ stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: useFacingMode } }); } currentStream = stream; video.srcObject = stream; await video.play(); // hide preview area
+  capturePreviewArea.style.display='none'; capturePreview.src=''; captureTitle.value=''; captureNotes.value=''; cameraModal.style.display='flex'; }catch(err){ alert('Could not start camera: '+(err.message||err)); console.error(err); } }
+function stopCamera(){ if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); currentStream = null; } video.srcObject = null; }
+async function captureFromVideo(){ if(!currentStream) return null; const track = currentStream.getVideoTracks()[0]; const settings = track.getSettings ? track.getSettings() : {}; const w = video.videoWidth || (settings.width || 1280); const h = video.videoHeight || (settings.height || 720); const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h; const ctx = canvas.getContext('2d'); ctx.drawImage(video, 0,0, w, h); return new Promise((res)=>{ canvas.toBlob(b=>res(b), 'image/jpeg', 0.95); }); }
+function toggleFacing(){ useFacingMode = (useFacingMode === 'environment') ? 'user' : 'environment'; }
+
+// ===== events =====
+uploadBtn.addEventListener('click', ()=>{ uploadForm.style.display = uploadForm.style.display === 'none' ? 'flex' : 'none'; fileInput.focus(); });
+saveUpload.addEventListener('click', async ()=>{ const f = fileInput.files[0]; if(!f){ alert('Choose a photo first'); return; } const title = titleInput.value.trim() || f.name; const ok = await addPhotoFromFile(f, title); if(ok){ fileInput.value=''; titleInput.value=''; uploadForm.style.display='none'; renderList(); } });
+searchEl.addEventListener('input', renderList); sortEl.addEventListener('change', renderList); refreshBtn.addEventListener('click', renderList); listEl.addEventListener('click', e=>{ const c = e.target.closest('[data-id]'); if(!c) return; openDetail(c.getAttribute('data-id')); }); closeModal.addEventListener('click', e=>{ e.preventDefault(); modal.style.display='none'; }); quickUpload.addEventListener('click', ()=> fileInput.click()); exportBtn.addEventListener('click', ()=>{ exportAll().catch(e=>alert('Export failed: '+e.message)); }); importBtn.addEventListener('click', ()=>{ const fi = document.createElement('input'); fi.type='file'; fi.accept='application/json'; fi.onchange = ()=>{ if(fi.files[0]) importFile(fi.files[0]); }; fi.click(); });
+
+// camera events
+cameraBtn.addEventListener('click', async ()=>{ useFacingMode = 'environment'; await startCamera(); }); closeCamera.addEventListener('click', e=>{ e.preventDefault(); stopCamera(); cameraModal.style.display='none'; }); switchCameraBtn.addEventListener('click', async ()=>{ toggleFacing(); stopCamera(); await startCamera(); });
+captureBtn.addEventListener('click', async ()=>{ try{ const blob = await captureFromVideo(); if(!blob) throw new Error('Capture failed'); // show preview and let user save/retake
+  const url = URL.createObjectURL(blob); capturePreview.src = url; capturePreviewArea.style.display = 'block'; // pause video stream (freeze frame handled by preview)
+  // store blob temporarily on element
+  cameraModal.dataset.pendingBlob = '1'; cameraModal._pendingBlob = blob; }catch(err){ alert('Capture failed: '+(err.message||err)); console.error(err); } });
+
+saveCapture.addEventListener('click', async ()=>{ try{ const pending = cameraModal._pendingBlob; if(!pending){ alert('No capture to save'); return; } const title = captureTitle.value.trim() || ('capture_'+new Date().toISOString()); // process blobs
+  const blobs = await (async (b)=>{ const img = new Image(); const url = URL.createObjectURL(b); return new Promise((res,rej)=>{ img.onload = ()=>{ const w=img.width,h=img.height; let scale=Math.min(1,1600/Math.max(w,h)); const mw=Math.round(w*scale), mh=Math.round(h*scale); const mc=document.createElement('canvas'); mc.width=mw; mc.height=mh; mc.getContext('2d').drawImage(img,0,0,mw,mh); let tscale=Math.min(1,400/Math.max(w,h)); const tw=Math.round(w*tscale), th=Math.round(h*tscale); const tc=document.createElement('canvas'); tc.width=tw; tc.height=th; tc.getContext('2d').drawImage(img,0,0,tw,th); mc.toBlob(mb=>{ tc.toBlob(tb=>{ URL.revokeObjectURL(url); res({main:mb,thumb:tb}); },'image/jpeg',0.8); },'image/jpeg',0.9); }; img.onerror=e=>{ URL.revokeObjectURL(url); rej(e); }; img.src = url; }); })(pending);
+  const id = crypto.randomUUID(); const entry = { id, filename: id+'.jpg', title: title, notes: (captureNotes.value||''), created_at: new Date().toISOString(), blob: blobs.main, thumb: blobs.thumb };
+  await dbAdd(entry);
+  // cleanup
+  const u = capturePreview.src; if(u) URL.revokeObjectURL(u); delete cameraModal._pendingBlob; capturePreview.src=''; captureTitle.value=''; captureNotes.value=''; capturePreviewArea.style.display='none'; stopCamera(); cameraModal.style.display='none'; renderList(); }catch(err){ alert('Save failed: '+(err.message||err)); console.error(err); } });
+
+retake.addEventListener('click', async ()=>{ // clear preview and resume camera
+  const u = capturePreview.src; if(u) URL.revokeObjectURL(u); capturePreview.src=''; capturePreviewArea.style.display='none'; if(!currentStream) await startCamera(); });
+
+cancelCapture.addEventListener('click', async ()=>{ const u = capturePreview.src; if(u) URL.revokeObjectURL(u); capturePreview.src=''; capturePreviewArea.style.display='none'; delete cameraModal._pendingBlob; stopCamera(); cameraModal.style.display='none'; });
+
+// ===== PWA manifest + Service Worker =====
+if('serviceWorker' in navigator){ const swCode = `self.addEventListener('install',e=>{self.skipWaiting();});self.addEventListener('activate',e=>{clients.claim();});self.addEventListener('fetch',e=>{});`; const swBlob = new Blob([swCode],{type:'text/javascript'}); const swUrl = URL.createObjectURL(swBlob); navigator.serviceWorker.register(swUrl).then(()=>console.log('Service worker registered')).catch(err=>console.warn('SW failed',err)); }
+const manifest = { name:'Photo Manager', short_name:'Photos', start_url:'.', display:'standalone', background_color:'#ffffff', description:'Manage photos locally', icons:[{ src:'data:image/png;base64,iVBORw0KGgo=', sizes:'192x192', type:'image/png' }] };
+const manBlob = new Blob([JSON.stringify(manifest)],{type:'application/manifest+json'}); const manUrl = URL.createObjectURL(manBlob); const link = document.createElement('link'); link.rel='manifest'; link.href=manUrl; document.head.appendChild(link);
+
+// ===== init =====
+(async ()=>{ if(window.innerWidth<700) bottomActions.style.display='flex'; fileInput.addEventListener('change', ()=>{ titleInput.value = fileInput.files[0] ? fileInput.files[0].name.replace(/\.[^.]+$/,'') : ''; }); await renderList(); })();
+</script>
+</body>
+</html>
