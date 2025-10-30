@@ -63,7 +63,7 @@
       <input id="titleInput" type="text" placeholder="Title (optional)" aria-label="Title" />
       <button id="saveUpload" type="button">Save</button>
     </form>
-    <div class="small">Tip: install to home screen to use offline (PWA). Important actions are kept accessible on small screens.</div>
+    <div class="small">Tip: install to desktop to use offline (strg + s on windows). You can also Import and Export .json files with the photo data to transfer these lists.</div>
   </div>
 </header>
 <main>
@@ -196,4 +196,5 @@ const manBlob = new Blob([JSON.stringify(manifest)],{type:'application/manifest+
 (async ()=>{ if(window.innerWidth<700) bottomActions.style.display='flex'; fileInput.addEventListener('change', ()=>{ titleInput.value = fileInput.files[0] ? fileInput.files[0].name.replace(/\.[^.]+$/,'') : ''; }); await renderList(); })();
 </script>
 </body>
+
 </html>
